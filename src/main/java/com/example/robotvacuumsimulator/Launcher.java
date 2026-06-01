@@ -14,7 +14,8 @@ public class Launcher extends Application {
         controller.setView(gui);
 
         // Genişliği 850, yüksekliği 650 yaparak butonlara yer açtık
-        Scene scene = new Scene(gui, 850, 650);
+        // Genişliği 900, yüksekliği 650 yapıyoruz
+        Scene scene = new Scene(gui, 900, 650);
         primaryStage.setTitle("Robot Süpürge Simülasyonu - BZ 214");
         primaryStage.setScene(scene);
         primaryStage.setResizable(true); // İstersen köşesinden tutup büyütebilmen için true yaptık
