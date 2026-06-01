@@ -2,13 +2,15 @@ package com.example.robotvacuumsimulator.controller;
 
 import com.example.robotvacuumsimulator.model.Robot;
 import com.example.robotvacuumsimulator.model.DirtType;
+import com.example.robotvacuumsimulator.model.Furniture;
+import com.example.robotvacuumsimulator.model.FurnitureType;
 import com.example.robotvacuumsimulator.view.SimulationGUI;
 import javafx.animation.AnimationTimer;
 import java.util.*;
 
 public class GameController {
     private final int GRID_SIZE = 16;
-    private int[][] grid = new int[GRID_SIZE][GRID_SIZE];
+    private int[][] grid = new int[GRID_SIZE][GRID_SIZE]; // 0: Boş, 1: Mobilya, 2: Halı
     private DirtType[][] dirtGrid = new DirtType[GRID_SIZE][GRID_SIZE];
     private int[][] dirtHealth = new int[GRID_SIZE][GRID_SIZE];
 
@@ -17,9 +19,10 @@ public class GameController {
     private boolean isResuming = false;
     private int resumeX = -1;
     private int resumeY = -1;
-
     private boolean missionCompleted = false;
+    private boolean isCharging = false;
 
+    private List<Furniture> furnitureList = new ArrayList<>();
     private final Robot robot;
     private SimulationGUI view;
     private AnimationTimer timer;
@@ -31,6 +34,9 @@ public class GameController {
     private int cleanedCount = 0;
     private int totalDirtCount = 0;
     private long lastUpdate = 0;
+    private long lastSecondTick = 0;
+    private int elapsedSeconds = 0;
+
     private int speedMultiplier = 1;
     private String currentAlgo = "Akıllı Rota";
     private boolean returningToStation = false;
@@ -49,6 +55,12 @@ public class GameController {
         timer = new AnimationTimer() {
             @Override
             public void handle(long now) {
+                if (now - lastSecondTick >= 1_000_000_000) {
+                    elapsedSeconds++;
+                    lastSecondTick = now;
+                    view.draw();
+                }
+
                 long threshold = (long) (600_000_000 / speedMultiplier);
                 if (now - lastUpdate >= threshold) {
                     updateSimulation();
@@ -61,10 +73,10 @@ public class GameController {
     public void startSimulation(int speed, String algo) {
         this.speedMultiplier = speed;
         this.currentAlgo = algo;
-        if (missionCompleted && totalDirtCount > 0) {
-            missionCompleted = false;
-        }
+        if (missionCompleted && totalDirtCount > 0) missionCompleted = false;
+
         if (!isRunning) {
+            lastSecondTick = System.nanoTime();
             timer.start();
             isRunning = true;
         }
@@ -84,12 +96,15 @@ public class GameController {
         robot.emptyDustbin();
         returningToStation = false;
         isResuming = false;
+        isCharging = false;
         missionCompleted = false;
         resumeX = -1;
         resumeY = -1;
         sweepDirection = "Doğu";
         cleanedCount = 0;
         totalDirtCount = 0;
+        elapsedSeconds = 0;
+        furnitureList.clear();
 
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
@@ -100,35 +115,85 @@ public class GameController {
             }
         }
 
-        grid[5][5] = 1; grid[5][6] = 1; grid[6][5] = 1;
-        grid[10][12] = 1; grid[11][12] = 1;
+        addFurniture(11, 2, FurnitureType.CARPET_LARGE);
+        addFurniture(3, 7, FurnitureType.CARPET_SMALL);
+        addFurniture(5, 2, FurnitureType.SOFA);
+        addFurniture(12, 5, FurnitureType.TABLE);
+        addFurniture(2, 8, FurnitureType.ARMCHAIR);
     }
 
-    public void addObstacle(int x, int y) {
-        if ((x == robot.getX() && y == robot.getY()) || (x == stationX && y == stationY)) return;
-        grid[x][y] = grid[x][y] == 1 ? 0 : 1;
-        dirtGrid[x][y] = DirtType.NONE;
-        dirtHealth[x][y] = 0;
+    // YENİ: Hem mobilya hem de Halıyı ekleyen evrensel metot
+    public boolean addFurniture(int startX, int startY, FurnitureType type) {
+        int w = type.getWidth();
+        int h = type.getHeight();
+        boolean isCarpet = type.name().startsWith("CARPET");
+
+        if (startX + w > GRID_SIZE || startY + h > GRID_SIZE) return false;
+
+        // Çakışma kontrolü (Zaten doluysa üzerine bir şey konamaz)
+        for (int i = startX; i < startX + w; i++) {
+            for (int j = startY; j < startY + h; j++) {
+                if (grid[i][j] != 0 || (i == robot.getX() && j == robot.getY()) || (i == stationX && j == stationY)) {
+                    return false;
+                }
+            }
+        }
+
+        for (int i = startX; i < startX + w; i++) {
+            for (int j = startY; j < startY + h; j++) {
+                if (isCarpet) {
+                    grid[i][j] = 2; // Halı zemin
+                } else {
+                    grid[i][j] = 1; // Mobilya (Duvar)
+                    if (dirtGrid[i][j] != DirtType.NONE) {
+                        dirtGrid[i][j] = DirtType.NONE;
+                        dirtHealth[i][j] = 0;
+                        if (totalDirtCount > 0) totalDirtCount--;
+                    }
+                }
+            }
+        }
+        furnitureList.add(new Furniture(startX, startY, type));
+        return true;
     }
 
     public void addDirt(int x, int y, DirtType type) {
-        if (grid[x][y] == 1) return;
+        if (grid[x][y] == 1) return; // Mobilyanın üstü kirlenmez (Halı kirlenebilir)
         if (dirtGrid[x][y] == DirtType.NONE) totalDirtCount++;
         dirtGrid[x][y] = type;
 
-        // YENİ: Leke eklendiğinde 3, 4 veya 5 puanlık rastgele bir zorluk derecesi atanır
-        if (type == DirtType.STAIN) {
-            dirtHealth[x][y] = 3 + (int)(Math.random() * 3);
-        } else {
-            dirtHealth[x][y] = 1;
-        }
+        if (type == DirtType.STAIN) dirtHealth[x][y] = 3 + (int)(Math.random() * 3);
+        else dirtHealth[x][y] = 1;
 
         visited[x][y] = false;
         missionCompleted = false;
     }
 
+    public void removeEntity(int x, int y) {
+        Iterator<Furniture> it = furnitureList.iterator();
+        while (it.hasNext()) {
+            Furniture f = it.next();
+            if (x >= f.getX() && x < f.getX() + f.getType().getWidth() &&
+                    y >= f.getY() && y < f.getY() + f.getType().getHeight()) {
+
+                for (int i = f.getX(); i < f.getX() + f.getType().getWidth(); i++) {
+                    for (int j = f.getY(); j < f.getY() + f.getType().getHeight(); j++) {
+                        grid[i][j] = 0;
+                    }
+                }
+                it.remove();
+                return;
+            }
+        }
+        if (dirtGrid[x][y] != DirtType.NONE) {
+            dirtGrid[x][y] = DirtType.NONE;
+            dirtHealth[x][y] = 0;
+            if (totalDirtCount > 0) totalDirtCount--;
+        }
+    }
+
     public void sendToStation() {
-        if (!returningToStation && !isResuming) {
+        if (!returningToStation && !isResuming && !isCharging) {
             resumeX = robot.getX();
             resumeY = robot.getY();
         }
@@ -138,6 +203,21 @@ public class GameController {
     }
 
     private void updateSimulation() {
+        if (isCharging) {
+            double newBat = robot.getBattery() + 2.5;
+            if (newBat >= 100.0) {
+                robot.setBattery(100.0);
+                isCharging = false;
+                if (missionCompleted) pauseSimulation();
+                else if (resumeX != -1 && resumeY != -1 && (resumeX != stationX || resumeY != stationY)) isResuming = true;
+                else pauseSimulation();
+            } else {
+                robot.setBattery(newBat);
+            }
+            view.draw();
+            return;
+        }
+
         if (!missionCompleted && totalDirtCount == 0) {
             missionCompleted = true;
             returningToStation = true;
@@ -155,17 +235,9 @@ public class GameController {
         if (returningToStation) {
             navigateWithBFS(stationX, stationY);
             if (robot.getX() == stationX && robot.getY() == stationY) {
-                robot.setBattery(100.0);
                 robot.emptyDustbin();
                 returningToStation = false;
-
-                if (missionCompleted) {
-                    pauseSimulation();
-                } else if (resumeX != -1 && resumeY != -1 && (resumeX != stationX || resumeY != stationY)) {
-                    isResuming = true;
-                } else {
-                    pauseSimulation();
-                }
+                isCharging = true;
             }
             view.draw();
             return;
@@ -182,30 +254,26 @@ public class GameController {
             return;
         }
 
-        // --- YENİ TEMİZLİK MANTIĞI ---
         int rx = robot.getX();
         int ry = robot.getY();
         visited[rx][ry] = true;
 
+        if (grid[rx][ry] == 2) robot.setBattery(robot.getBattery() - 1.2);
+
         DirtType currentDirt = dirtGrid[rx][ry];
         if (currentDirt != DirtType.NONE) {
-
             if (currentDirt == DirtType.STAIN) {
-                dirtHealth[rx][ry]--; // Fırçalama: Lekenin canını 1 düşür
-                robot.addDust(1);     // Hazneye 1 puan kir at
-
+                dirtHealth[rx][ry]--;
+                robot.addDust(1);
                 if (dirtHealth[rx][ry] <= 0) {
-                    // Leke tamamen silindi
                     dirtGrid[rx][ry] = DirtType.NONE;
                     cleanedCount++;
                     if (totalDirtCount > 0) totalDirtCount--;
                 } else {
-                    // YENİ: Leke henüz bitmedi. Robot olduğu yerde bekleyecek (fırçalamaya devam edecek)
                     view.draw();
-                    return; // Return ile fonksiyonu burada kesiyoruz ki aşağıdaki move() algoritmaları çalışmasın!
+                    return;
                 }
             } else {
-                // Sıvı veya Toz ise tek seferde çekilir
                 int dustAmount = (currentDirt == DirtType.LIQUID) ? 2 : 1;
                 robot.addDust(dustAmount);
                 dirtGrid[rx][ry] = DirtType.NONE;
@@ -224,23 +292,17 @@ public class GameController {
     }
 
     private void moveSmart() {
-        int rx = robot.getX();
-        int ry = robot.getY();
+        int rx = robot.getX(); int ry = robot.getY(); int nx = rx, ny = ry;
+        if (sweepDirection.equals("Doğu")) nx++; else if (sweepDirection.equals("Batı")) nx--;
 
-        int nx = rx, ny = ry;
-        if (sweepDirection.equals("Doğu")) nx++;
-        else if (sweepDirection.equals("Batı")) nx--;
-
-        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] == 0 && !visited[nx][ny]) {
+        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1 && !visited[nx][ny]) {
             robot.setDirection(sweepDirection);
             robot.move(nx, ny, dirtGrid[nx][ny]);
             return;
         }
 
-        int downX = rx;
-        int downY = ry + 1;
-
-        if (downY < GRID_SIZE && grid[downX][downY] == 0 && !visited[downX][downY]) {
+        int downX = rx; int downY = ry + 1;
+        if (downY < GRID_SIZE && grid[downX][downY] != 1 && !visited[downX][downY]) {
             robot.setDirection("Güney");
             robot.move(downX, downY, dirtGrid[downX][downY]);
             sweepDirection = sweepDirection.equals("Doğu") ? "Batı" : "Doğu";
@@ -248,11 +310,9 @@ public class GameController {
         }
 
         int[] target = findNearestUnvisited();
-        if (target != null) {
-            navigateWithBFS(target[0], target[1]);
-        } else {
-            resumeX = -1;
-            resumeY = -1;
+        if (target != null) navigateWithBFS(target[0], target[1]);
+        else {
+            resumeX = -1; resumeY = -1;
             returningToStation = true;
             missionCompleted = true;
         }
@@ -261,31 +321,18 @@ public class GameController {
     private int[] findNearestUnvisited() {
         Queue<int[]> queue = new LinkedList<>();
         boolean[][] bfsVisited = new boolean[GRID_SIZE][GRID_SIZE];
-
         queue.add(new int[]{robot.getX(), robot.getY()});
         bfsVisited[robot.getX()][robot.getY()] = true;
-
-        int[] dx = {0, 0, 1, -1};
-        int[] dy = {1, -1, 0, 0};
+        int[] dx = {0, 0, 1, -1}; int[] dy = {1, -1, 0, 0};
 
         while (!queue.isEmpty()) {
-            int[] curr = queue.poll();
-            int cx = curr[0];
-            int cy = curr[1];
-
-            if (!visited[cx][cy] && grid[cx][cy] == 0) {
-                return new int[]{cx, cy};
-            }
-
+            int[] curr = queue.poll(); int cx = curr[0]; int cy = curr[1];
+            if (!visited[cx][cy] && grid[cx][cy] != 1) return new int[]{cx, cy};
             for (int i = 0; i < 4; i++) {
-                int nx = cx + dx[i];
-                int ny = cy + dy[i];
-
-                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-                    if (!bfsVisited[nx][ny] && grid[nx][ny] == 0) {
-                        queue.add(new int[]{nx, ny});
-                        bfsVisited[nx][ny] = true;
-                    }
+                int nx = cx + dx[i]; int ny = cy + dy[i];
+                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && !bfsVisited[nx][ny] && grid[nx][ny] != 1) {
+                    queue.add(new int[]{nx, ny});
+                    bfsVisited[nx][ny] = true;
                 }
             }
         }
@@ -293,8 +340,7 @@ public class GameController {
     }
 
     private void navigateWithBFS(int targetX, int targetY) {
-        int startX = robot.getX();
-        int startY = robot.getY();
+        int startX = robot.getX(); int startY = robot.getY();
         if (startX == targetX && startY == targetY) return;
 
         Queue<int[]> queue = new LinkedList<>();
@@ -303,68 +349,44 @@ public class GameController {
 
         queue.add(new int[]{startX, startY});
         bfsVisited[startX][startY] = true;
-
-        int[] dx = {0, 0, 1, -1};
-        int[] dy = {1, -1, 0, 0};
+        int[] dx = {0, 0, 1, -1}; int[] dy = {1, -1, 0, 0};
         boolean found = false;
 
         while (!queue.isEmpty()) {
-            int[] curr = queue.poll();
-            int cx = curr[0];
-            int cy = curr[1];
-
-            if (cx == targetX && cy == targetY) {
-                found = true;
-                break;
-            }
-
+            int[] curr = queue.poll(); int cx = curr[0]; int cy = curr[1];
+            if (cx == targetX && cy == targetY) { found = true; break; }
             for (int i = 0; i < 4; i++) {
-                int nx = cx + dx[i];
-                int ny = cy + dy[i];
-
-                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE) {
-                    if (!bfsVisited[nx][ny] && grid[nx][ny] == 0) {
-                        queue.add(new int[]{nx, ny});
-                        bfsVisited[nx][ny] = true;
-                        parent[nx][ny] = new int[]{cx, cy};
-                    }
+                int nx = cx + dx[i]; int ny = cy + dy[i];
+                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && !bfsVisited[nx][ny] && grid[nx][ny] != 1) {
+                    queue.add(new int[]{nx, ny});
+                    bfsVisited[nx][ny] = true;
+                    parent[nx][ny] = new int[]{cx, cy};
                 }
             }
         }
 
         if (found) {
-            int currX = targetX;
-            int currY = targetY;
+            int currX = targetX; int currY = targetY;
             while (parent[currX][currY][0] != startX || parent[currX][currY][1] != startY) {
-                int px = parent[currX][currY][0];
-                int py = parent[currX][currY][1];
-                currX = px;
-                currY = py;
+                int px = parent[currX][currY][0]; int py = parent[currX][currY][1];
+                currX = px; currY = py;
             }
-
             if (currX > startX) robot.setDirection("Doğu");
             else if (currX < startX) robot.setDirection("Batı");
             else if (currY > startY) robot.setDirection("Güney");
             else if (currY < startY) robot.setDirection("Kuzey");
-
             robot.move(currX, currY, dirtGrid[currX][currY]);
         }
     }
 
     private void moveRandom() {
-        int[] dx = {0, 0, 1, -1};
-        int[] dy = {1, -1, 0, 0};
+        int[] dx = {0, 0, 1, -1}; int[] dy = {1, -1, 0, 0};
         String[] dirs = {"Güney", "Kuzey", "Doğu", "Batı"};
-
         List<Integer> validIndices = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
-            int nx = robot.getX() + dx[i];
-            int ny = robot.getY() + dy[i];
-            if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] == 0) {
-                validIndices.add(i);
-            }
+            int nx = robot.getX() + dx[i]; int ny = robot.getY() + dy[i];
+            if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1) validIndices.add(i);
         }
-
         if (!validIndices.isEmpty()) {
             int index = validIndices.get((int) (Math.random() * validIndices.size()));
             robot.setDirection(dirs[index]);
@@ -373,18 +395,12 @@ public class GameController {
     }
 
     private void moveWallFollow() {
-        int nx = robot.getX();
-        int ny = robot.getY();
-        String dir = robot.getDirection();
+        int nx = robot.getX(); int ny = robot.getY(); String dir = robot.getDirection();
+        if (dir.equals("Doğu")) nx++; else if (dir.equals("Batı")) nx--;
+        else if (dir.equals("Kuzey")) ny--; else if (dir.equals("Güney")) ny++;
 
-        if (dir.equals("Doğu")) nx++;
-        else if (dir.equals("Batı")) nx--;
-        else if (dir.equals("Kuzey")) ny--;
-        else if (dir.equals("Güney")) ny++;
-
-        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] == 0) {
-            robot.move(nx, ny, dirtGrid[nx][ny]);
-        } else {
+        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1) robot.move(nx, ny, dirtGrid[nx][ny]);
+        else {
             if (dir.equals("Doğu")) robot.setDirection("Güney");
             else if (dir.equals("Güney")) robot.setDirection("Batı");
             else if (dir.equals("Batı")) robot.setDirection("Kuzey");
@@ -397,6 +413,7 @@ public class GameController {
     public int[][] getGrid() { return grid; }
     public DirtType[][] getDirtGrid() { return dirtGrid; }
     public int[][] getDirtHealth() { return dirtHealth; }
+    public List<Furniture> getFurnitureList() { return furnitureList; }
     public int getRobotX() { return robot.getX(); }
     public int getRobotY() { return robot.getY(); }
     public double getRobotBattery() { return robot.getBattery(); }
@@ -407,4 +424,7 @@ public class GameController {
     public int getCleanedCount() { return cleanedCount; }
     public int getTotalDirtCount() { return totalDirtCount; }
     public boolean isMissionCompleted() { return missionCompleted; }
+    public int getElapsedSeconds() { return elapsedSeconds; }
+    public boolean isCharging() { return isCharging; }
+    public boolean isOnCarpet() { return grid[robot.getX()][robot.getY()] == 2; }
 }
