@@ -10,7 +10,8 @@ import java.util.*;
 
 public class GameController {
     private final int GRID_SIZE = 16;
-    private int[][] grid = new int[GRID_SIZE][GRID_SIZE]; // 0: Boş, 1: Mobilya, 2: Halı
+    // 0: Boş, 1: Mobilya, 2: Büyük Halı (Yüksek Güç), 3: Küçük Halı (Normal Güç)
+    private int[][] grid = new int[GRID_SIZE][GRID_SIZE];
     private DirtType[][] dirtGrid = new DirtType[GRID_SIZE][GRID_SIZE];
     private int[][] dirtHealth = new int[GRID_SIZE][GRID_SIZE];
 
@@ -60,7 +61,6 @@ public class GameController {
                     lastSecondTick = now;
                     view.draw();
                 }
-
                 long threshold = (long) (600_000_000 / speedMultiplier);
                 if (now - lastUpdate >= threshold) {
                     updateSimulation();
@@ -94,6 +94,7 @@ public class GameController {
         robot.setPosition(stationX, stationY);
         robot.setBattery(100.0);
         robot.emptyDustbin();
+        robot.emptyLiquidTank(); // YENİ
         returningToStation = false;
         isResuming = false;
         isCharging = false;
@@ -122,18 +123,14 @@ public class GameController {
         addFurniture(2, 8, FurnitureType.ARMCHAIR);
     }
 
-    // YENİ: Hem mobilya hem de Halıyı ekleyen evrensel metot
     public boolean addFurniture(int startX, int startY, FurnitureType type) {
         int w = type.getWidth();
         int h = type.getHeight();
-        boolean isCarpet = type.name().startsWith("CARPET");
-
         if (startX + w > GRID_SIZE || startY + h > GRID_SIZE) return false;
 
-        // Çakışma kontrolü (Zaten doluysa üzerine bir şey konamaz)
         for (int i = startX; i < startX + w; i++) {
             for (int j = startY; j < startY + h; j++) {
-                if (grid[i][j] != 0 || (i == robot.getX() && j == robot.getY()) || (i == stationX && j == stationY)) {
+                if (grid[i][j] == 1 || (i == robot.getX() && j == robot.getY()) || (i == stationX && j == stationY)) {
                     return false;
                 }
             }
@@ -141,10 +138,13 @@ public class GameController {
 
         for (int i = startX; i < startX + w; i++) {
             for (int j = startY; j < startY + h; j++) {
-                if (isCarpet) {
-                    grid[i][j] = 2; // Halı zemin
+                // YENİ: Küçük halı (3) ve Büyük halı (2) ayrımı
+                if (type == FurnitureType.CARPET_LARGE) {
+                    grid[i][j] = 2;
+                } else if (type == FurnitureType.CARPET_SMALL) {
+                    grid[i][j] = 3;
                 } else {
-                    grid[i][j] = 1; // Mobilya (Duvar)
+                    grid[i][j] = 1;
                     if (dirtGrid[i][j] != DirtType.NONE) {
                         dirtGrid[i][j] = DirtType.NONE;
                         dirtHealth[i][j] = 0;
@@ -158,7 +158,7 @@ public class GameController {
     }
 
     public void addDirt(int x, int y, DirtType type) {
-        if (grid[x][y] == 1) return; // Mobilyanın üstü kirlenmez (Halı kirlenebilir)
+        if (grid[x][y] == 1) return;
         if (dirtGrid[x][y] == DirtType.NONE) totalDirtCount++;
         dirtGrid[x][y] = type;
 
@@ -226,7 +226,9 @@ public class GameController {
             resumeY = -1;
         }
 
-        if (!returningToStation && !isResuming && !missionCompleted && (robot.getBattery() <= 20.0 || robot.isDustbinFull())) {
+        // YENİ: Sıvı haznesi de dolduğunda istasyona dönmeli
+        if (!returningToStation && !isResuming && !missionCompleted &&
+                (robot.getBattery() <= 20.0 || robot.isDustbinFull() || robot.isLiquidTankFull())) {
             resumeX = robot.getX();
             resumeY = robot.getY();
             returningToStation = true;
@@ -236,6 +238,7 @@ public class GameController {
             navigateWithBFS(stationX, stationY);
             if (robot.getX() == stationX && robot.getY() == stationY) {
                 robot.emptyDustbin();
+                robot.emptyLiquidTank(); // YENİ
                 returningToStation = false;
                 isCharging = true;
             }
@@ -258,10 +261,13 @@ public class GameController {
         int ry = robot.getY();
         visited[rx][ry] = true;
 
+        // Sadece Büyük Halıdaysa (2) yüksek güç tüket
         if (grid[rx][ry] == 2) robot.setBattery(robot.getBattery() - 1.2);
 
         DirtType currentDirt = dirtGrid[rx][ry];
         if (currentDirt != DirtType.NONE) {
+
+            // YENİ: Hazne ayrıştırması
             if (currentDirt == DirtType.STAIN) {
                 dirtHealth[rx][ry]--;
                 robot.addDust(1);
@@ -273,9 +279,13 @@ public class GameController {
                     view.draw();
                     return;
                 }
+            } else if (currentDirt == DirtType.LIQUID) {
+                robot.addLiquid(2); // Sıvıysa sıvı haznesine gider
+                dirtGrid[rx][ry] = DirtType.NONE;
+                cleanedCount++;
+                if (totalDirtCount > 0) totalDirtCount--;
             } else {
-                int dustAmount = (currentDirt == DirtType.LIQUID) ? 2 : 1;
-                robot.addDust(dustAmount);
+                robot.addDust(1); // Tozsa toz haznesine
                 dirtGrid[rx][ry] = DirtType.NONE;
                 cleanedCount++;
                 if (totalDirtCount > 0) totalDirtCount--;
@@ -418,6 +428,7 @@ public class GameController {
     public int getRobotY() { return robot.getY(); }
     public double getRobotBattery() { return robot.getBattery(); }
     public double getRobotDustbinPercentage() { return robot.getDustbinPercentage(); }
+    public double getRobotLiquidTankPercentage() { return robot.getLiquidTankPercentage(); } // YENİ
     public String getRobotDirection() { return robot.getDirection(); }
     public int getStationX() { return stationX; }
     public int getStationY() { return stationY; }
@@ -426,5 +437,5 @@ public class GameController {
     public boolean isMissionCompleted() { return missionCompleted; }
     public int getElapsedSeconds() { return elapsedSeconds; }
     public boolean isCharging() { return isCharging; }
-    public boolean isOnCarpet() { return grid[robot.getX()][robot.getY()] == 2; }
+    public boolean isOnHighPowerCarpet() { return grid[robot.getX()][robot.getY()] == 2; } // YENİ: Sadece büyük halıda uyarı verir
 }

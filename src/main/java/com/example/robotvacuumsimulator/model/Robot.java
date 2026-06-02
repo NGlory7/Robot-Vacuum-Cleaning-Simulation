@@ -3,10 +3,14 @@ package com.example.robotvacuumsimulator.model;
 public class Robot {
     private int x, y;
     private double battery;
-    private String direction; // "Kuzey", "Güney", "Doğu", "Batı"
+    private String direction;
 
     private int currentDust;
     private final int MAX_DUST_CAPACITY = 20;
+
+    // YENİ: Sıvı Haznesi
+    private int currentLiquid;
+    private final int MAX_LIQUID_CAPACITY = 20;
 
     public Robot(int startX, int startY) {
         this.x = startX;
@@ -14,6 +18,7 @@ public class Robot {
         this.battery = 100.0;
         this.direction = "Doğu";
         this.currentDust = 0;
+        this.currentLiquid = 0;
     }
 
     public int getX() { return x; }
@@ -23,6 +28,10 @@ public class Robot {
 
     public boolean isDustbinFull() { return currentDust >= MAX_DUST_CAPACITY; }
     public double getDustbinPercentage() { return ((double) currentDust / MAX_DUST_CAPACITY) * 100.0; }
+
+    // YENİ: Sıvı Haznesi Metotları
+    public boolean isLiquidTankFull() { return currentLiquid >= MAX_LIQUID_CAPACITY; }
+    public double getLiquidTankPercentage() { return ((double) currentLiquid / MAX_LIQUID_CAPACITY) * 100.0; }
 
     public void setBattery(double battery) {
         this.battery = Math.min(100.0, Math.max(0.0, battery));
@@ -43,6 +52,15 @@ public class Robot {
 
     public void emptyDustbin() {
         this.currentDust = 0;
+    }
+
+    // YENİ
+    public void addLiquid(int amount) {
+        this.currentLiquid = Math.min(this.currentLiquid + amount, MAX_LIQUID_CAPACITY);
+    }
+
+    public void emptyLiquidTank() {
+        this.currentLiquid = 0;
     }
 
     public void move(int newX, int newY, DirtType dirtType) {
