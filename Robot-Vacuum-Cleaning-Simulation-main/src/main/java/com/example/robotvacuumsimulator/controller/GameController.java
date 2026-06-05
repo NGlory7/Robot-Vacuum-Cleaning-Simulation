@@ -10,27 +10,24 @@ import java.util.*;
 
 public class GameController {
     private final int GRID_SIZE = 16;
-    // 0: Boş, 1: Mobilya, 2: Büyük Halı (Yüksek Güç), 3: Küçük Halı (Normal Güç)
     private int[][] grid = new int[GRID_SIZE][GRID_SIZE];
     private DirtType[][] dirtGrid = new DirtType[GRID_SIZE][GRID_SIZE];
     private int[][] dirtHealth = new int[GRID_SIZE][GRID_SIZE];
-
     private boolean[][] visited = new boolean[GRID_SIZE][GRID_SIZE];
+
+    private List<int[]> currentPlannedPath = new ArrayList<>();
+
     private String sweepDirection = "Doğu";
     private boolean isResuming = false;
     private int resumeX = -1;
     private int resumeY = -1;
     private boolean missionCompleted = false;
     private boolean isCharging = false;
-    
-    // BFS Optimizasyonu için Rota Kuyruğu
-    private Queue<int[]> currentPath = new LinkedList<>();
 
-    // Spiral Algoritması Değişkenleri
     private int spiralStepsTaken = 0;
     private int spiralMaxSteps = 1;
     private int spiralTurns = 0;
-    private int spiralDirectionIndex = 0; // 0: Doğu, 1: Güney, 2: Batı, 3: Kuzey
+    private int spiralDirectionIndex = 0;
     private final String[] spiralDirs = {"Doğu", "Güney", "Batı", "Kuzey"};
     private final int[] spiralDx = {1, 0, -1, 0};
     private final int[] spiralDy = {0, 1, 0, -1};
@@ -106,7 +103,7 @@ public class GameController {
         robot.setPosition(stationX, stationY);
         robot.setBattery(100.0);
         robot.emptyDustbin();
-        robot.emptyLiquidTank(); // YENİ
+        robot.emptyLiquidTank();
         returningToStation = false;
         isResuming = false;
         isCharging = false;
@@ -117,6 +114,13 @@ public class GameController {
         cleanedCount = 0;
         totalDirtCount = 0;
         elapsedSeconds = 0;
+
+        spiralStepsTaken = 0;
+        spiralMaxSteps = 1;
+        spiralTurns = 0;
+        spiralDirectionIndex = 0;
+
+        currentPlannedPath.clear();
         furnitureList.clear();
 
         for (int i = 0; i < GRID_SIZE; i++) {
@@ -128,8 +132,7 @@ public class GameController {
             }
         }
 
-        addFurniture(11, 2, FurnitureType.CARPET_LARGE);
-        addFurniture(3, 7, FurnitureType.CARPET_SMALL);
+        addFurniture(11, 2, FurnitureType.CARPET);
         addFurniture(5, 2, FurnitureType.SOFA);
         addFurniture(12, 5, FurnitureType.TABLE);
         addFurniture(2, 8, FurnitureType.ARMCHAIR);
@@ -142,7 +145,7 @@ public class GameController {
 
         for (int i = startX; i < startX + w; i++) {
             for (int j = startY; j < startY + h; j++) {
-                if (grid[i][j] == 1 || (i == robot.getX() && j == robot.getY()) || (i == stationX && j == stationY)) {
+                if (grid[i][j] != 0 || (i == robot.getX() && j == robot.getY()) || (i == stationX && j == stationY)) {
                     return false;
                 }
             }
@@ -150,11 +153,8 @@ public class GameController {
 
         for (int i = startX; i < startX + w; i++) {
             for (int j = startY; j < startY + h; j++) {
-                // YENİ: Küçük halı (3) ve Büyük halı (2) ayrımı
-                if (type == FurnitureType.CARPET_LARGE) {
+                if (type == FurnitureType.CARPET) {
                     grid[i][j] = 2;
-                } else if (type == FurnitureType.CARPET_SMALL) {
-                    grid[i][j] = 3;
                 } else {
                     grid[i][j] = 1;
                     if (dirtGrid[i][j] != DirtType.NONE) {
@@ -174,8 +174,10 @@ public class GameController {
         if (dirtGrid[x][y] == DirtType.NONE) totalDirtCount++;
         dirtGrid[x][y] = type;
 
-        if (type == DirtType.STAIN) dirtHealth[x][y] = 3 + (int)(Math.random() * 3);
-        else dirtHealth[x][y] = 1;
+        // ZORUNLU GEREKSİNİM: Kir tipine göre temizlenme süresi (Health) ayarı
+        if (type == DirtType.STAIN) dirtHealth[x][y] = 4; // Leke 4 adımda temizlenir
+        else if (type == DirtType.LIQUID) dirtHealth[x][y] = 2; // Sıvı 2 adımda temizlenir
+        else dirtHealth[x][y] = 1; // Toz 1 adımda temizlenir
 
         visited[x][y] = false;
         missionCompleted = false;
@@ -214,8 +216,23 @@ public class GameController {
         startSimulation(speedMultiplier, currentAlgo);
     }
 
+    // ZORUNLU GEREKSİNİM: Arayüzden bataryaya manuel müdahale edebilmek için
+    public void setRobotBattery(double level) {
+        robot.setBattery(level);
+
+        // Eğer şarja dönüyorduysa ama bataryayı manuel olarak doldurduysak kaldığı yere geri dönsün
+        if (returningToStation && level > 20.0 && !missionCompleted) {
+            returningToStation = false;
+            if (resumeX != -1 && resumeY != -1 && (resumeX != stationX || resumeY != stationY)) {
+                isResuming = true;
+            }
+        }
+        if (view != null) view.draw();
+    }
+
     private void updateSimulation() {
         if (isCharging) {
+            currentPlannedPath.clear();
             double newBat = robot.getBattery() + 2.5;
             if (newBat >= 100.0) {
                 robot.setBattery(100.0);
@@ -238,7 +255,6 @@ public class GameController {
             resumeY = -1;
         }
 
-        // YENİ: Sıvı haznesi de dolduğunda istasyona dönmeli
         if (!returningToStation && !isResuming && !missionCompleted &&
                 (robot.getBattery() <= 20.0 || robot.isDustbinFull() || robot.isLiquidTankFull())) {
             resumeX = robot.getX();
@@ -250,9 +266,10 @@ public class GameController {
             navigateWithBFS(stationX, stationY);
             if (robot.getX() == stationX && robot.getY() == stationY) {
                 robot.emptyDustbin();
-                robot.emptyLiquidTank(); // YENİ
+                robot.emptyLiquidTank();
                 returningToStation = false;
                 isCharging = true;
+                currentPlannedPath.clear();
             }
             view.draw();
             return;
@@ -264,6 +281,7 @@ public class GameController {
                 isResuming = false;
                 resumeX = -1;
                 resumeY = -1;
+                currentPlannedPath.clear();
             }
             view.draw();
             return;
@@ -273,34 +291,23 @@ public class GameController {
         int ry = robot.getY();
         visited[rx][ry] = true;
 
-        // Sadece Büyük Halıdaysa (2) yüksek güç tüket
         if (grid[rx][ry] == 2) robot.setBattery(robot.getBattery() - 1.2);
 
         DirtType currentDirt = dirtGrid[rx][ry];
         if (currentDirt != DirtType.NONE) {
+            // Zamana yayılan temizlik mantığı
+            dirtHealth[rx][ry]--;
 
-            // YENİ: Hazne ayrıştırması
-            if (currentDirt == DirtType.STAIN) {
-                dirtHealth[rx][ry]--;
-                robot.addDust(1);
-                if (dirtHealth[rx][ry] <= 0) {
-                    dirtGrid[rx][ry] = DirtType.NONE;
-                    cleanedCount++;
-                    if (totalDirtCount > 0) totalDirtCount--;
-                } else {
-                    view.draw();
-                    return;
-                }
-            } else if (currentDirt == DirtType.LIQUID) {
-                robot.addLiquid(2); // Sıvıysa sıvı haznesine gider
+            if (currentDirt == DirtType.LIQUID) robot.addLiquid(1);
+            else robot.addDust(1);
+
+            if (dirtHealth[rx][ry] <= 0) {
                 dirtGrid[rx][ry] = DirtType.NONE;
                 cleanedCount++;
                 if (totalDirtCount > 0) totalDirtCount--;
             } else {
-                robot.addDust(1); // Tozsa toz haznesine
-                dirtGrid[rx][ry] = DirtType.NONE;
-                cleanedCount++;
-                if (totalDirtCount > 0) totalDirtCount--;
+                view.draw(); // Kir bitmediyse hareket etmeden üzerinde bekler ve temizlemeye devam eder
+                return;
             }
         }
 
@@ -314,7 +321,31 @@ public class GameController {
     }
 
     private void moveSmart() {
-        int rx = robot.getX(); int ry = robot.getY(); int nx = rx, ny = ry;
+        int rx = robot.getX(); int ry = robot.getY();
+
+        currentPlannedPath.clear();
+        int simX = rx, simY = ry;
+        String simDir = sweepDirection;
+        for(int i = 0; i < 15; i++) {
+            int snx = simX, sny = simY;
+            if (simDir.equals("Doğu")) snx++; else if (simDir.equals("Batı")) snx--;
+
+            if (snx >= 0 && snx < GRID_SIZE && sny >= 0 && sny < GRID_SIZE && grid[snx][sny] != 1 && !visited[snx][sny]) {
+                currentPlannedPath.add(new int[]{snx, sny});
+                simX = snx; simY = sny;
+            } else {
+                int downX = simX; int downY = simY + 1;
+                if (downY < GRID_SIZE && grid[downX][downY] != 1 && !visited[downX][downY]) {
+                    currentPlannedPath.add(new int[]{downX, downY});
+                    simX = downX; simY = downY;
+                    simDir = simDir.equals("Doğu") ? "Batı" : "Doğu";
+                } else {
+                    break;
+                }
+            }
+        }
+
+        int nx = rx, ny = ry;
         if (sweepDirection.equals("Doğu")) nx++; else if (sweepDirection.equals("Batı")) nx--;
 
         if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1 && !visited[nx][ny]) {
@@ -363,7 +394,10 @@ public class GameController {
 
     private void navigateWithBFS(int targetX, int targetY) {
         int startX = robot.getX(); int startY = robot.getY();
-        if (startX == targetX && startY == targetY) return;
+        if (startX == targetX && startY == targetY) {
+            currentPlannedPath.clear();
+            return;
+        }
 
         Queue<int[]> queue = new LinkedList<>();
         boolean[][] bfsVisited = new boolean[GRID_SIZE][GRID_SIZE];
@@ -388,16 +422,25 @@ public class GameController {
         }
 
         if (found) {
+            List<int[]> path = new ArrayList<>();
             int currX = targetX; int currY = targetY;
-            while (parent[currX][currY][0] != startX || parent[currX][currY][1] != startY) {
-                int px = parent[currX][currY][0]; int py = parent[currX][currY][1];
+            while (currX != startX || currY != startY) {
+                path.add(0, new int[]{currX, currY});
+                int px = parent[currX][currY][0];
+                int py = parent[currX][currY][1];
                 currX = px; currY = py;
             }
-            if (currX > startX) robot.setDirection("Doğu");
-            else if (currX < startX) robot.setDirection("Batı");
-            else if (currY > startY) robot.setDirection("Güney");
-            else if (currY < startY) robot.setDirection("Kuzey");
-            robot.move(currX, currY, dirtGrid[currX][currY]);
+            currentPlannedPath = new ArrayList<>(path);
+
+            int nextX = path.get(0)[0];
+            int nextY = path.get(0)[1];
+            if (nextX > startX) robot.setDirection("Doğu");
+            else if (nextX < startX) robot.setDirection("Batı");
+            else if (nextY > startY) robot.setDirection("Güney");
+            else if (nextY < startY) robot.setDirection("Kuzey");
+            robot.move(nextX, nextY, dirtGrid[nextX][nextY]);
+        } else {
+            currentPlannedPath.clear();
         }
     }
 
@@ -411,17 +454,42 @@ public class GameController {
         }
         if (!validIndices.isEmpty()) {
             int index = validIndices.get((int) (Math.random() * validIndices.size()));
+            currentPlannedPath.clear();
+            currentPlannedPath.add(new int[]{robot.getX() + dx[index], robot.getY() + dy[index]});
             robot.setDirection(dirs[index]);
             robot.move(robot.getX() + dx[index], robot.getY() + dy[index], dirtGrid[robot.getX()][robot.getY()]);
         }
     }
 
     private void moveWallFollow() {
-        int nx = robot.getX(); int ny = robot.getY(); String dir = robot.getDirection();
+        int rx = robot.getX(); int ry = robot.getY(); String dir = robot.getDirection();
+
+        currentPlannedPath.clear();
+        int simX = rx, simY = ry;
+        String simDir = dir;
+        for(int i = 0; i < 15; i++) {
+            int snx = simX; int sny = simY;
+            if (simDir.equals("Doğu")) snx++; else if (simDir.equals("Batı")) snx--;
+            else if (simDir.equals("Kuzey")) sny--; else if (simDir.equals("Güney")) sny++;
+
+            if (snx >= 0 && snx < GRID_SIZE && sny >= 0 && sny < GRID_SIZE && grid[snx][sny] != 1) {
+                currentPlannedPath.add(new int[]{snx, sny});
+                simX = snx; simY = sny;
+            } else {
+                if (simDir.equals("Doğu")) simDir = "Güney";
+                else if (simDir.equals("Güney")) simDir = "Batı";
+                else if (simDir.equals("Batı")) simDir = "Kuzey";
+                else simDir = "Doğu";
+            }
+        }
+
+        int nx = rx; int ny = ry;
         if (dir.equals("Doğu")) nx++; else if (dir.equals("Batı")) nx--;
         else if (dir.equals("Kuzey")) ny--; else if (dir.equals("Güney")) ny++;
 
-        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1) robot.move(nx, ny, dirtGrid[nx][ny]);
+        if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && grid[nx][ny] != 1) {
+            robot.move(nx, ny, dirtGrid[nx][ny]);
+        }
         else {
             if (dir.equals("Doğu")) robot.setDirection("Güney");
             else if (dir.equals("Güney")) robot.setDirection("Batı");
@@ -430,17 +498,66 @@ public class GameController {
         }
     }
 
-    private void moveSpiral() { moveRandom(); }
+    private void moveSpiral() {
+        int rx = robot.getX(); int ry = robot.getY();
+
+        currentPlannedPath.clear();
+        int simX = rx, simY = ry;
+        int simSteps = spiralStepsTaken;
+        int simMax = spiralMaxSteps;
+        int simTurns = spiralTurns;
+        int simDirIdx = spiralDirectionIndex;
+
+        for (int i = 0; i < 30; i++) {
+            int snx = simX + spiralDx[simDirIdx];
+            int sny = simY + spiralDy[simDirIdx];
+
+            if (snx < 0 || snx >= GRID_SIZE || sny < 0 || sny >= GRID_SIZE || grid[snx][sny] == 1 || visited[snx][sny]) {
+                break;
+            }
+
+            currentPlannedPath.add(new int[]{snx, sny});
+            simX = snx; simY = sny;
+            simSteps++;
+
+            if (simSteps == simMax) {
+                simSteps = 0;
+                simDirIdx = (simDirIdx + 1) % 4;
+                simTurns++;
+                if (simTurns % 2 == 0) simMax++;
+            }
+        }
+
+        int nx = rx + spiralDx[spiralDirectionIndex];
+        int ny = ry + spiralDy[spiralDirectionIndex];
+
+        if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE || grid[nx][ny] == 1 || visited[nx][ny]) {
+            moveSmart();
+            return;
+        }
+
+        robot.setDirection(spiralDirs[spiralDirectionIndex]);
+        robot.move(nx, ny, dirtGrid[nx][ny]);
+        spiralStepsTaken++;
+
+        if (spiralStepsTaken == spiralMaxSteps) {
+            spiralStepsTaken = 0;
+            spiralDirectionIndex = (spiralDirectionIndex + 1) % 4;
+            spiralTurns++;
+            if (spiralTurns % 2 == 0) spiralMaxSteps++;
+        }
+    }
 
     public int[][] getGrid() { return grid; }
     public DirtType[][] getDirtGrid() { return dirtGrid; }
     public int[][] getDirtHealth() { return dirtHealth; }
+    public List<int[]> getCurrentPlannedPath() { return currentPlannedPath; }
     public List<Furniture> getFurnitureList() { return furnitureList; }
     public int getRobotX() { return robot.getX(); }
     public int getRobotY() { return robot.getY(); }
     public double getRobotBattery() { return robot.getBattery(); }
     public double getRobotDustbinPercentage() { return robot.getDustbinPercentage(); }
-    public double getRobotLiquidTankPercentage() { return robot.getLiquidTankPercentage(); } // YENİ
+    public double getRobotLiquidTankPercentage() { return robot.getLiquidTankPercentage(); }
     public String getRobotDirection() { return robot.getDirection(); }
     public int getStationX() { return stationX; }
     public int getStationY() { return stationY; }
@@ -449,5 +566,5 @@ public class GameController {
     public boolean isMissionCompleted() { return missionCompleted; }
     public int getElapsedSeconds() { return elapsedSeconds; }
     public boolean isCharging() { return isCharging; }
-    public boolean isOnHighPowerCarpet() { return grid[robot.getX()][robot.getY()] == 2; } // YENİ: Sadece büyük halıda uyarı verir
+    public boolean isOnCarpet() { return grid[robot.getX()][robot.getY()] == 2; }
 }
