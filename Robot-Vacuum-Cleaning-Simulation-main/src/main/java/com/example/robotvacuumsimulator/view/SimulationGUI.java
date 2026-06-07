@@ -18,6 +18,8 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import java.io.InputStream;
 import java.util.List;
+import java.util.Map;
+import java.util.EnumMap;
 
 public class SimulationGUI extends BorderPane {
     private final Canvas canvas;
@@ -57,19 +59,30 @@ public class SimulationGUI extends BorderPane {
     private final Color COLOR_ROBOT_OUTLINE = Color.web("#334155");
     private final Color COLOR_ROBOT_DIR = Color.web(ACCENT_BLUE);
 
-    private Image imgPlant, imgArmchair, imgSofa, imgTable, imgTvUnit, imgCarpet, imgVacuum;
+    private Image imgCarpet, imgVacuum;
+    private final Map<FurnitureType, FurnitureRenderer> furnitureRenderers;
+    private final Map<FurnitureType, Image> furnitureImages;
 
     public SimulationGUI(GameController controller) {
         this.controller = controller;
         this.canvas = new Canvas(GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
 
-        imgPlant = loadImage("plant.png");
-        imgArmchair = loadImage("armchair.png");
-        imgSofa = loadImage("sofa.png");
-        imgTable = loadImage("table.png");
-        imgTvUnit = loadImage("tv_unit.png");
+        furnitureImages = new EnumMap<>(FurnitureType.class);
+        furnitureImages.put(FurnitureType.PLANT, loadImage("plant.png"));
+        furnitureImages.put(FurnitureType.ARMCHAIR, loadImage("armchair.png"));
+        furnitureImages.put(FurnitureType.SOFA, loadImage("sofa.png"));
+        furnitureImages.put(FurnitureType.TABLE, loadImage("table.png"));
+        furnitureImages.put(FurnitureType.TV_UNIT, loadImage("tv_unit.png"));
+
         imgCarpet = loadImage("carpet.png");
         imgVacuum = loadImage("vacuum.png");
+
+        furnitureRenderers = new EnumMap<>(FurnitureType.class);
+        furnitureRenderers.put(FurnitureType.PLANT, new PlantRenderer());
+        furnitureRenderers.put(FurnitureType.ARMCHAIR, new ArmchairRenderer());
+        furnitureRenderers.put(FurnitureType.SOFA, new SofaRenderer());
+        furnitureRenderers.put(FurnitureType.TABLE, new TableRenderer());
+        furnitureRenderers.put(FurnitureType.TV_UNIT, new TvUnitRenderer());
 
         this.lblPos = new Label("(0, 0)");
         this.lblDir = new Label("Doğu (+)");
@@ -356,12 +369,14 @@ public class SimulationGUI extends BorderPane {
     }
 
     private void drawDirt(GraphicsContext gc) {
-        DirtType[][] dirtGrid = controller.getDirtGrid();
-        int[][] dirtHealth = controller.getDirtHealth();
+        com.example.robotvacuumsimulator.model.GridMap map = controller.getMap();
 
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
-                DirtType dt = dirtGrid[i][j];
+                com.example.robotvacuumsimulator.model.Cell cell = map.getCell(i, j);
+                if (cell == null) continue;
+                
+                DirtType dt = cell.getDirtType();
 
                 if (dt == DirtType.DUST) {
                     gc.setFill(COLOR_DUST);
@@ -372,7 +387,7 @@ public class SimulationGUI extends BorderPane {
                     gc.setFill(COLOR_LIQUID);
                     gc.fillOval(i * CELL_SIZE + 8, j * CELL_SIZE + 10, CELL_SIZE - 16, CELL_SIZE - 20);
                 } else if (dt == DirtType.STAIN) {
-                    int health = dirtHealth[i][j];
+                    int health = cell.getDirtHealth();
                     if (health >= 4) {
                         gc.setFill(Color.web("#8B000090"));
                         gc.fillOval(i * CELL_SIZE + 5, j * CELL_SIZE + 5, CELL_SIZE - 10, CELL_SIZE - 10);
@@ -404,43 +419,10 @@ public class SimulationGUI extends BorderPane {
             double ph = f.getType().getHeight() * CELL_SIZE;
 
             gc.setEffect(dropShadow);
-            switch (f.getType()) {
-                case PLANT:
-                    if (imgPlant != null && !imgPlant.isError()) gc.drawImage(imgPlant, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#8B4513")); gc.fillOval(px + 8, py + 8, 24, 24);
-                        gc.setFill(Color.web("#15803D")); gc.fillOval(px + 2, py + 2, 36, 36);
-                    }
-                    break;
-                case ARMCHAIR:
-                    if (imgArmchair != null && !imgArmchair.isError()) gc.drawImage(imgArmchair, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#D4A373")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
-                        gc.setFill(Color.web("#FAEDCD")); gc.fillRoundRect(px + 12, py + 12, pw - 24, ph - 24, 10, 10);
-                    }
-                    break;
-                case SOFA:
-                    if (imgSofa != null && !imgSofa.isError()) gc.drawImage(imgSofa, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#CCD5AE")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
-                        gc.setFill(Color.web("#E9EDC9")); gc.fillRoundRect(px + 8, py + 8, 22, ph - 16, 8, 8);
-                        gc.fillRoundRect(px + pw - 30, py + 8, 22, ph - 16, 8, 8);
-                    }
-                    break;
-                case TABLE:
-                    if (imgTable != null && !imgTable.isError()) gc.drawImage(imgTable, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#8B5A2B")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 12, 12);
-                        gc.setFill(Color.web("#F8FAFC")); gc.fillOval(px + pw/2 - 18, py + ph/2 - 18, 36, 36);
-                    }
-                    break;
-                case TV_UNIT:
-                    if (imgTvUnit != null && !imgTvUnit.isError()) gc.drawImage(imgTvUnit, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#334155")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 6, 6);
-                        gc.setFill(Color.web("#0F172A")); gc.fillRect(px + 8, py + CELL_SIZE - 10, pw - 16, CELL_SIZE * 2 + 20);
-                    }
-                    break;
+            FurnitureRenderer renderer = furnitureRenderers.get(f.getType());
+            if (renderer != null) {
+                Image img = furnitureImages.get(f.getType());
+                renderer.render(gc, px, py, pw, ph, img, CELL_SIZE);
             }
             gc.setEffect(null);
         }
