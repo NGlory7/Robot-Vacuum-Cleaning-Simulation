@@ -167,19 +167,6 @@ public class GameController {
         if (view != null) view.draw();
     }
 
-    // ZORUNLU GEREKSİNİM: Arayüzden bataryaya manuel müdahale edebilmek için
-    public void setRobotBattery(double level) {
-        robot.setBattery(level);
-
-        // Eğer şarja dönüyorduysa ama bataryayı manuel olarak doldurduysak kaldığı yere geri dönsün
-        if (returningToStation && level > 20.0 && !missionCompleted) {
-            returningToStation = false;
-            if (resumeX != -1 && resumeY != -1 && (resumeX != stationX || resumeY != stationY)) {
-                isResuming = true;
-            }
-        }
-        if (view != null) view.draw();
-    }
 
     private void updateSimulation() {
         if (isCharging) {
