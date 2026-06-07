@@ -17,6 +17,9 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.EnumMap;
 
 public class SimulationGUI extends BorderPane {
     private final Canvas canvas;
@@ -30,17 +33,14 @@ public class SimulationGUI extends BorderPane {
     private final ComboBox<FurnitureType> cmbFurnitureType;
     private final ToggleGroup algoGroup, placementGroup;
     private final Slider sldSpeed;
-    private final ToggleButton btnModeDirt, btnModeFurniture, btnModeCarpet;
+    private final Slider sldBatteryControl; // ZORUNLU GEREKSİNİM: Batarya Kontrolcü
+    private final ToggleButton btnModeDirt, btnModeFurniture;
 
     private final int CELL_SIZE = 40;
     private final int GRID_SIZE = 16;
     private final double TOTAL_AREA = 256.0;
 
-    // =========================================================================
-    // 🎨 SUNUM (HOCA) AYARLARI - RENKLER VE ŞEKİLLER BURADAN DEĞİŞTİRİLİR
-    // =========================================================================
-    
-    // --- Arayüz (Menü) Renkleri ---
+    // --- Renkler ---
     private final String BG_COLOR = "#0F172A";
     private final String PANEL_COLOR = "#1E293B";
     private final String TEXT_COLOR = "#94A3B8";
@@ -50,36 +50,39 @@ public class SimulationGUI extends BorderPane {
     private final String ACCENT_RED = "#EF4444";
     private final String ACCENT_YELLOW = "#F59E0B";
 
-    // --- Harita (Grid) Renkleri ---
-    private final Color COLOR_FLOOR = Color.web("#E2D5C3");       // Zemin rengi
-    private final Color COLOR_GRID_LINES = Color.web("#D1C0A8");  // Izgara çizgileri
-    private final Color COLOR_STATION = Color.web("#1E293B");     // Şarj istasyonu
-    
-    // --- Kir/Toz Renkleri ---
-    private final Color COLOR_DUST = Color.web("#7A7A7A");        // Normal Toz
-    private final Color COLOR_LIQUID = Color.web("#3498DB80");    // Sıvı (80 saydamlık demek)
-    
-    // --- Robot Renkleri ---
-    private final Color COLOR_ROBOT_BODY = Color.web("#F8FAFC");  // Robotun ana rengi
-    private final Color COLOR_ROBOT_OUTLINE = Color.web("#334155");// Robot dış çizgisi
-    private final Color COLOR_ROBOT_DIR = Color.web(ACCENT_BLUE);  // Robotun yön gösterge noktası
+    private final Color COLOR_FLOOR = Color.web("#E2D5C3");
+    private final Color COLOR_GRID_LINES = Color.web("#D1C0A8");
+    private final Color COLOR_STATION = Color.web("#1E293B");
+    private final Color COLOR_DUST = Color.web("#7A7A7A");
+    private final Color COLOR_LIQUID = Color.web("#3498DB80");
+    private final Color COLOR_ROBOT_BODY = Color.web("#F8FAFC");
+    private final Color COLOR_ROBOT_OUTLINE = Color.web("#334155");
+    private final Color COLOR_ROBOT_DIR = Color.web(ACCENT_BLUE);
 
-    // =========================================================================
-
-    private Image imgPlant, imgArmchair, imgSofa, imgTable, imgTvUnit;
-    private Image imgCarpetSmall, imgCarpetLarge;
+    private Image imgCarpet, imgVacuum;
+    private final Map<FurnitureType, FurnitureRenderer> furnitureRenderers;
+    private final Map<FurnitureType, Image> furnitureImages;
 
     public SimulationGUI(GameController controller) {
         this.controller = controller;
         this.canvas = new Canvas(GRID_SIZE * CELL_SIZE, GRID_SIZE * CELL_SIZE);
 
-        imgPlant = loadImage("plant.png");
-        imgArmchair = loadImage("armchair.png");
-        imgSofa = loadImage("sofa.png");
-        imgTable = loadImage("table.png");
-        imgTvUnit = loadImage("tv_unit.png");
-        imgCarpetSmall = loadImage("carpet_small.png");
-        imgCarpetLarge = loadImage("carpet_large.png");
+        furnitureImages = new EnumMap<>(FurnitureType.class);
+        furnitureImages.put(FurnitureType.PLANT, loadImage("plant.png"));
+        furnitureImages.put(FurnitureType.ARMCHAIR, loadImage("armchair.png"));
+        furnitureImages.put(FurnitureType.SOFA, loadImage("sofa.png"));
+        furnitureImages.put(FurnitureType.TABLE, loadImage("table.png"));
+        furnitureImages.put(FurnitureType.TV_UNIT, loadImage("tv_unit.png"));
+
+        imgCarpet = loadImage("carpet.png");
+        imgVacuum = loadImage("vacuum.png");
+
+        furnitureRenderers = new EnumMap<>(FurnitureType.class);
+        furnitureRenderers.put(FurnitureType.PLANT, new PlantRenderer());
+        furnitureRenderers.put(FurnitureType.ARMCHAIR, new ArmchairRenderer());
+        furnitureRenderers.put(FurnitureType.SOFA, new SofaRenderer());
+        furnitureRenderers.put(FurnitureType.TABLE, new TableRenderer());
+        furnitureRenderers.put(FurnitureType.TV_UNIT, new TvUnitRenderer());
 
         this.lblPos = new Label("(0, 0)");
         this.lblDir = new Label("Doğu (+)");
@@ -117,14 +120,23 @@ public class SimulationGUI extends BorderPane {
         this.algoGroup = new ToggleGroup();
         this.sldSpeed = new Slider(1, 5, 1);
 
+        // ZORUNLU GEREKSİNİM: Manuel Batarya Ayarı
+        this.sldBatteryControl = new Slider(0, 100, 100);
+        this.sldBatteryControl.setShowTickMarks(true);
+        this.sldBatteryControl.setShowTickLabels(true);
+        this.sldBatteryControl.setMajorTickUnit(25);
+        this.sldBatteryControl.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (sldBatteryControl.isFocused()) { // Sadece kullanıcı fare ile çekiyorsa güncelle
+                controller.setRobotBattery(newVal.doubleValue());
+            }
+        });
+
         placementGroup = new ToggleGroup();
-        btnModeDirt = new ToggleButton("❄ Kir");
-        btnModeFurniture = new ToggleButton("🛋 Eşya");
-        btnModeCarpet = new ToggleButton("🔲 Halı");
+        btnModeDirt = new ToggleButton("❄ Kir Ekle");
+        btnModeFurniture = new ToggleButton("🛋 Eşya Ekle");
 
         btnModeDirt.setToggleGroup(placementGroup);
         btnModeFurniture.setToggleGroup(placementGroup);
-        btnModeCarpet.setToggleGroup(placementGroup);
         btnModeDirt.setSelected(true);
 
         setupUI();
@@ -147,25 +159,21 @@ public class SimulationGUI extends BorderPane {
         sidebar.setPrefWidth(300);
         sidebar.setStyle("-fx-background-color: " + PANEL_COLOR + ";");
 
-        HBox modeBox = new HBox(5, btnModeDirt, btnModeFurniture, btnModeCarpet);
+        HBox modeBox = new HBox(5, btnModeDirt, btnModeFurniture);
         modeBox.setAlignment(Pos.CENTER);
         btnModeDirt.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(btnModeDirt, Priority.ALWAYS);
         btnModeFurniture.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(btnModeFurniture, Priority.ALWAYS);
-        btnModeCarpet.setMaxWidth(Double.MAX_VALUE); HBox.setHgrow(btnModeCarpet, Priority.ALWAYS);
 
-        String tglStyle = "-fx-background-color: #334155; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 6; -fx-font-size: 12px;";
+        String tglStyle = "-fx-background-color: #334155; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 6; -fx-font-size: 13px;";
         btnModeDirt.setStyle(tglStyle);
         btnModeFurniture.setStyle(tglStyle);
-        btnModeCarpet.setStyle(tglStyle);
 
         placementGroup.selectedToggleProperty().addListener((obs, oldVal, newVal) -> {
             btnModeDirt.setStyle(tglStyle);
             btnModeFurniture.setStyle(tglStyle);
-            btnModeCarpet.setStyle(tglStyle);
 
             if (newVal == btnModeDirt) btnModeDirt.setStyle(tglStyle + "-fx-background-color: " + ACCENT_BLUE + ";");
             else if (newVal == btnModeFurniture) btnModeFurniture.setStyle(tglStyle + "-fx-background-color: " + ACCENT_GREEN + ";");
-            else if (newVal == btnModeCarpet) btnModeCarpet.setStyle(tglStyle + "-fx-background-color: #B8860B;");
         });
         btnModeDirt.setStyle(tglStyle + "-fx-background-color: " + ACCENT_BLUE + ";");
 
@@ -235,10 +243,11 @@ public class SimulationGUI extends BorderPane {
         sidebar.getChildren().addAll(
                 createTitle("🛠 Araçlar"), modeBox,
                 createSubTitle("Kir Türü"), cmbDirtType,
-                createSubTitle("Eşya / Halı Modeli"), cmbFurnitureType,
+                createSubTitle("Eşya Modeli"), cmbFurnitureType,
                 lblHint,
                 new Separator(),
                 createTitle("⚙ Ayarlar"), createSubTitle("Robot Hızı"), sldSpeed,
+                createSubTitle("Manuel Batarya (%)"), sldBatteryControl, // MENÜYE EKLENDİ
                 createSubTitle("Temizlik Algoritması"), algoBox,
                 new Separator(),
                 createTitle("🤖 Robot Durumu"), statusGrid,
@@ -268,7 +277,7 @@ public class SimulationGUI extends BorderPane {
                     controller.removeEntity(x, y);
                 }
                 else if (e.getButton() == MouseButton.PRIMARY) {
-                    if (btnModeFurniture.isSelected() || btnModeCarpet.isSelected()) {
+                    if (btnModeFurniture.isSelected()) {
                         controller.addFurniture(x, y, cmbFurnitureType.getValue());
                     } else {
                         String selected = cmbDirtType.getValue();
@@ -283,12 +292,12 @@ public class SimulationGUI extends BorderPane {
         });
 
         this.setCenter(canvasContainer);
-        
+
         ScrollPane scrollSidebar = new ScrollPane(sidebar);
         scrollSidebar.setFitToWidth(true);
         scrollSidebar.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         scrollSidebar.setStyle("-fx-background: " + PANEL_COLOR + "; -fx-background-color: transparent; -fx-border-color: #334155; -fx-border-width: 0 1 0 0;");
-        
+
         this.setLeft(scrollSidebar);
         this.setBottom(footer);
     }
@@ -309,27 +318,23 @@ public class SimulationGUI extends BorderPane {
         lbl.setStyle("-fx-text-fill: " + WHITE_TEXT + "; -fx-font-weight: bold;");
     }
 
-    // =========================================================================
-    // 🖌️ ÇİZİM İŞLEMLERİ (PARÇALANMIŞ HALİ)
-    // =========================================================================
-
     public void draw() {
         GraphicsContext gc = canvas.getGraphicsContext2D();
-        
+
         drawBackgroundAndGrid(gc);
-        drawFurniture(gc);
+        drawCarpets(gc);
         drawDirt(gc);
+        drawSolidFurniture(gc);
+        drawPlannedPath(gc);
         drawStation(gc);
         drawRobot(gc);
         updateDashboardData(gc);
     }
 
     private void drawBackgroundAndGrid(GraphicsContext gc) {
-        // Zemin
         gc.setFill(COLOR_FLOOR);
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
 
-        // Izgara Çizgileri
         gc.setStroke(COLOR_GRID_LINES);
         gc.setLineWidth(1);
         for (int i = 0; i <= GRID_SIZE; i++) {
@@ -337,26 +342,44 @@ public class SimulationGUI extends BorderPane {
             gc.strokeLine(0, i * CELL_SIZE, canvas.getWidth(), i * CELL_SIZE);
         }
 
-        // Çerçeve Sınırı
         gc.setStroke(Color.web("#334155"));
         gc.setLineWidth(12);
         gc.strokeRect(0, 0, canvas.getWidth(), canvas.getHeight());
     }
 
+    private void drawCarpets(GraphicsContext gc) {
+        for (Furniture f : controller.getFurnitureList()) {
+            if (f.getType() == FurnitureType.CARPET) {
+                double px = f.getX() * CELL_SIZE;
+                double py = f.getY() * CELL_SIZE;
+                double pw = f.getType().getWidth() * CELL_SIZE;
+                double ph = f.getType().getHeight() * CELL_SIZE;
+
+                if (imgCarpet != null && !imgCarpet.isError()) {
+                    gc.drawImage(imgCarpet, px, py, pw, ph);
+                } else {
+                    gc.setFill(Color.web("#CD853F"));
+                    gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
+                    gc.setStroke(Color.web("#8B4513"));
+                    gc.setLineWidth(2);
+                    gc.strokeRoundRect(px + 10, py + 10, pw - 20, ph - 20, 8, 8);
+                }
+            }
+        }
+    }
+
     private void drawDirt(GraphicsContext gc) {
-        DirtType[][] dirtGrid = controller.getDirtGrid();
-        int[][] dirtHealth = controller.getDirtHealth();
+        com.example.robotvacuumsimulator.model.GridMap map = controller.getMap();
 
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
-                DirtType dt = dirtGrid[i][j];
+                com.example.robotvacuumsimulator.model.Cell cell = map.getCell(i, j);
+                if (cell == null) continue;
                 
-                // HOCA TOZUN/KİRİN ŞEKLİNİ DEĞİŞTİR DERSE BURAYA BAK:
-                // fillOval = Yuvarlak
-                // fillRect = Kare
+                DirtType dt = cell.getDirtType();
+
                 if (dt == DirtType.DUST) {
                     gc.setFill(COLOR_DUST);
-                    // 3 küçük nokta çizerek toz efekti verilmiş
                     gc.fillOval(i * CELL_SIZE + 10, j * CELL_SIZE + 10, 5, 5);
                     gc.fillOval(i * CELL_SIZE + 25, j * CELL_SIZE + 15, 4, 4);
                     gc.fillOval(i * CELL_SIZE + 15, j * CELL_SIZE + 25, 6, 6);
@@ -364,7 +387,7 @@ public class SimulationGUI extends BorderPane {
                     gc.setFill(COLOR_LIQUID);
                     gc.fillOval(i * CELL_SIZE + 8, j * CELL_SIZE + 10, CELL_SIZE - 16, CELL_SIZE - 20);
                 } else if (dt == DirtType.STAIN) {
-                    int health = dirtHealth[i][j];
+                    int health = cell.getDirtHealth();
                     if (health >= 4) {
                         gc.setFill(Color.web("#8B000090"));
                         gc.fillOval(i * CELL_SIZE + 5, j * CELL_SIZE + 5, CELL_SIZE - 10, CELL_SIZE - 10);
@@ -380,7 +403,7 @@ public class SimulationGUI extends BorderPane {
         }
     }
 
-    private void drawFurniture(GraphicsContext gc) {
+    private void drawSolidFurniture(GraphicsContext gc) {
         DropShadow dropShadow = new DropShadow();
         dropShadow.setRadius(10.0);
         dropShadow.setOffsetX(5.0);
@@ -388,71 +411,53 @@ public class SimulationGUI extends BorderPane {
         dropShadow.setColor(Color.color(0, 0, 0, 0.5));
 
         for (Furniture f : controller.getFurnitureList()) {
+            if (f.getType() == FurnitureType.CARPET) continue;
+
             double px = f.getX() * CELL_SIZE;
             double py = f.getY() * CELL_SIZE;
             double pw = f.getType().getWidth() * CELL_SIZE;
             double ph = f.getType().getHeight() * CELL_SIZE;
 
-            // Halılar gölgesiz çizilsin
-            if (f.getType().name().startsWith("CARPET")) {
-                if (f.getType() == FurnitureType.CARPET_SMALL && imgCarpetSmall != null && !imgCarpetSmall.isError()) {
-                    gc.drawImage(imgCarpetSmall, px, py, pw, ph);
-                }
-                else if (f.getType() == FurnitureType.CARPET_LARGE && imgCarpetLarge != null && !imgCarpetLarge.isError()) {
-                    gc.drawImage(imgCarpetLarge, px, py, pw, ph);
-                }
-                else {
-                    gc.setFill(Color.web("#CD853F"));
-                    gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
-                    gc.setStroke(Color.web("#8B4513"));
-                    gc.setLineWidth(2);
-                    gc.strokeRoundRect(px + 10, py + 10, pw - 20, ph - 20, 8, 8);
-                }
-                continue;
-            }
-
-            // Diğer eşyalar gölgeli çizilsin
             gc.setEffect(dropShadow);
-            switch (f.getType()) {
-                case PLANT:
-                    if (imgPlant != null && !imgPlant.isError()) gc.drawImage(imgPlant, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#8B4513")); gc.fillOval(px + 8, py + 8, 24, 24);
-                        gc.setFill(Color.web("#15803D")); gc.fillOval(px + 2, py + 2, 36, 36);
-                    }
-                    break;
-                case ARMCHAIR:
-                    if (imgArmchair != null && !imgArmchair.isError()) gc.drawImage(imgArmchair, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#D4A373")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
-                        gc.setFill(Color.web("#FAEDCD")); gc.fillRoundRect(px + 12, py + 12, pw - 24, ph - 24, 10, 10);
-                    }
-                    break;
-                case SOFA:
-                    if (imgSofa != null && !imgSofa.isError()) gc.drawImage(imgSofa, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#CCD5AE")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 15, 15);
-                        gc.setFill(Color.web("#E9EDC9")); gc.fillRoundRect(px + 8, py + 8, 22, ph - 16, 8, 8);
-                        gc.fillRoundRect(px + pw - 30, py + 8, 22, ph - 16, 8, 8);
-                    }
-                    break;
-                case TABLE:
-                    if (imgTable != null && !imgTable.isError()) gc.drawImage(imgTable, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#8B5A2B")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 12, 12);
-                        gc.setFill(Color.web("#F8FAFC")); gc.fillOval(px + pw/2 - 18, py + ph/2 - 18, 36, 36);
-                    }
-                    break;
-                case TV_UNIT:
-                    if (imgTvUnit != null && !imgTvUnit.isError()) gc.drawImage(imgTvUnit, px, py, pw, ph);
-                    else {
-                        gc.setFill(Color.web("#334155")); gc.fillRoundRect(px + 4, py + 4, pw - 8, ph - 8, 6, 6);
-                        gc.setFill(Color.web("#0F172A")); gc.fillRect(px + 8, py + CELL_SIZE - 10, pw - 16, CELL_SIZE * 2 + 20);
-                    }
-                    break;
+            FurnitureRenderer renderer = furnitureRenderers.get(f.getType());
+            if (renderer != null) {
+                Image img = furnitureImages.get(f.getType());
+                renderer.render(gc, px, py, pw, ph, img, CELL_SIZE);
             }
             gc.setEffect(null);
         }
+    }
+
+    private void drawPlannedPath(GraphicsContext gc) {
+        List<int[]> path = controller.getCurrentPlannedPath();
+        if (path == null || path.isEmpty()) return;
+
+        gc.setStroke(Color.web(ACCENT_BLUE, 0.8));
+        gc.setLineWidth(4);
+        gc.setLineDashes(8d, 8d);
+
+        double startX = controller.getRobotX() * CELL_SIZE + CELL_SIZE / 2.0;
+        double startY = controller.getRobotY() * CELL_SIZE + CELL_SIZE / 2.0;
+
+        gc.beginPath();
+        gc.moveTo(startX, startY);
+
+        double lastNx = startX;
+        double lastNy = startY;
+
+        for (int[] node : path) {
+            double nx = node[0] * CELL_SIZE + CELL_SIZE / 2.0;
+            double ny = node[1] * CELL_SIZE + CELL_SIZE / 2.0;
+            gc.lineTo(nx, ny);
+            lastNx = nx;
+            lastNy = ny;
+        }
+
+        gc.stroke();
+        gc.setLineDashes(null);
+
+        gc.setFill(Color.web(ACCENT_RED, 0.9));
+        gc.fillOval(lastNx - 5, lastNy - 5, 10, 10);
     }
 
     private void drawStation(GraphicsContext gc) {
@@ -468,42 +473,59 @@ public class SimulationGUI extends BorderPane {
     private void drawRobot(GraphicsContext gc) {
         int rx = controller.getRobotX();
         int ry = controller.getRobotY();
-        double cx = rx * CELL_SIZE + CELL_SIZE / 2.0;
-        double cy = ry * CELL_SIZE + CELL_SIZE / 2.0;
-        double rRadius = CELL_SIZE / 2.0 - 4;
-
-        // HOCA ROBOTUN ŞEKLİNİ KARE YAP DERSE: 
-        // fillOval ve strokeOval yerine -> fillRect ve strokeRect kullanabilirsiniz.
-        
-        // Robot Gölgesi
-        gc.setFill(Color.color(0, 0, 0, 0.4));
-        gc.fillOval(cx - rRadius + 3, cy - rRadius + 3, rRadius * 2, rRadius * 2);
-        
-        // Robot Gövdesi
-        gc.setFill(COLOR_ROBOT_BODY);
-        gc.fillOval(cx - rRadius, cy - rRadius, rRadius * 2, rRadius * 2);
-        
-        // Robot Çerçevesi
-        gc.setStroke(COLOR_ROBOT_OUTLINE);
-        gc.setLineWidth(4);
-        gc.strokeOval(cx - rRadius, cy - rRadius, rRadius * 2, rRadius * 2);
-
-        // Robot Yön Göstergesi (Mavi Nokta)
-        gc.setFill(COLOR_ROBOT_DIR);
-        double dotX = cx, dotY = cy;
         String dir = controller.getRobotDirection();
-        if (dir.equals("Doğu")) dotX += rRadius - 6;
-        else if (dir.equals("Batı")) dotX -= rRadius - 6;
-        else if (dir.equals("Güney")) dotY += rRadius - 6;
-        else if (dir.equals("Kuzey")) dotY -= rRadius - 6;
-        gc.fillOval(dotX - 5, dotY - 5, 10, 10);
+
+        double px = rx * CELL_SIZE;
+        double py = ry * CELL_SIZE;
+        double rSize = CELL_SIZE + 10;
+
+        if (imgVacuum != null && !imgVacuum.isError()) {
+            double angle = 0;
+            double imageOffset = 90;
+
+            switch (dir) {
+                case "Doğu":  angle = 0 + imageOffset; break;
+                case "Güney": angle = 90 + imageOffset; break;
+                case "Batı":  angle = 180 + imageOffset; break;
+                case "Kuzey": angle = -90 + imageOffset; break;
+            }
+
+            gc.save();
+            gc.translate(px + CELL_SIZE / 2.0, py + CELL_SIZE / 2.0);
+            gc.rotate(angle);
+            gc.drawImage(imgVacuum, -rSize / 2.0, -rSize / 2.0, rSize, rSize);
+            gc.restore();
+
+        } else {
+            double cx = rx * CELL_SIZE + CELL_SIZE / 2.0;
+            double cy = ry * CELL_SIZE + CELL_SIZE / 2.0;
+            double rRadius = CELL_SIZE / 2.0 - 4;
+
+            gc.setFill(Color.color(0, 0, 0, 0.4));
+            gc.fillOval(cx - rRadius + 3, cy - rRadius + 3, rRadius * 2, rRadius * 2);
+
+            gc.setFill(COLOR_ROBOT_BODY);
+            gc.fillOval(cx - rRadius, cy - rRadius, rRadius * 2, rRadius * 2);
+
+            gc.setStroke(COLOR_ROBOT_OUTLINE);
+            gc.setLineWidth(4);
+            gc.strokeOval(cx - rRadius, cy - rRadius, rRadius * 2, rRadius * 2);
+
+            gc.setFill(COLOR_ROBOT_DIR);
+            double dotX = cx, dotY = cy;
+            if (dir.equals("Doğu")) dotX += rRadius - 6;
+            else if (dir.equals("Batı")) dotX -= rRadius - 6;
+            else if (dir.equals("Güney")) dotY += rRadius - 6;
+            else if (dir.equals("Kuzey")) dotY -= rRadius - 6;
+            gc.fillOval(dotX - 5, dotY - 5, 10, 10);
+        }
     }
 
     private void updateDashboardData(GraphicsContext gc) {
         int rx = controller.getRobotX();
         int ry = controller.getRobotY();
         String dir = controller.getRobotDirection();
-        
+
         lblPos.setText("(" + rx + ", " + ry + ")");
         lblDir.setText(dir);
 
@@ -511,13 +533,18 @@ public class SimulationGUI extends BorderPane {
         pbBattery.setProgress(bat / 100.0);
         lblBatteryText.setText(String.format("%%%d", (int)bat));
 
+        // Eğer kullanıcı fare ile slider ile oynamıyorsa otomatik olarak batarya barı ile senkronize edilsin
+        if (!sldBatteryControl.isFocused()) {
+            sldBatteryControl.setValue(bat);
+        }
+
         if (controller.isCharging()) {
             lblDir.setText("İstasyonda Bekliyor");
             lblBatteryWarning.setText("⚡ Şarj Ediliyor...");
             lblBatteryWarning.setStyle("-fx-text-fill: " + ACCENT_GREEN + "; -fx-font-weight: bold; -fx-font-size: 11px;");
             pbBattery.setStyle("-fx-accent: " + ACCENT_GREEN + "; -fx-control-inner-background: #334155;");
         }
-        else if (controller.isOnHighPowerCarpet()) {
+        else if (controller.isOnCarpet()) {
             lblBatteryWarning.setText("🔥 Halı Üzerinde (Yüksek Güç)");
             lblBatteryWarning.setStyle("-fx-text-fill: " + ACCENT_RED + "; -fx-font-weight: bold; -fx-font-size: 11px;");
             pbBattery.setStyle("-fx-accent: " + ACCENT_RED + "; -fx-control-inner-background: #334155;");
