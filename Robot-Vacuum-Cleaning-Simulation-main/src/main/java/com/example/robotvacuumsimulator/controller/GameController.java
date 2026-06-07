@@ -126,7 +126,7 @@ public class GameController {
         map.reset();
 
         addFurniture(11, 2, FurnitureType.CARPET);
-        addFurniture(5, 2, FurniQtureType.SOFA);
+        addFurniture(5, 2, FurnitureType.SOFA);
         addFurniture(12, 5, FurnitureType.TABLE);
         addFurniture(2, 8, FurnitureType.ARMCHAIR);
     }
