@@ -11,9 +11,9 @@ JavaFX masaüstü simülasyonu. Odaya eşya ve kir yerleştirip algoritmaları k
 
 - **4 temizlik algoritması**
   - **Akıllı Rota** (varsayılan): temizlenmemiş en yakın alana gider; engellerin etrafından BFS ile yol bulur.
-  - **Spiral**: dıştan içe / içten dışa spiral tarama.
-  - **Duvar Takip**: duvar ve eşya kenarlarını izler.
-  - **Rastgele**: çarpınca rastgele yön değiştirir (karşılaştırma için).
+  - **Spiral**: bulunduğu yerden dışa doğru genişleyen kare spiral çizer; spiral tıkanırsa Akıllı Rota'ya devreder.
+  - **Duvar Takip**: engele çarpana kadar düz gider, çarpınca döner; duvar ve eşya kenarlarını izler.
+  - **Rastgele**: her adımda gidilebilir yönlerden birini rastgele seçer (karşılaştırma için).
 - **Oda düzenleme:** fareyle bitki (1×1), tekli koltuk (2×2), üçlü koltuk (4×2), yemek masası (3×3),
   TV ünitesi (1×4) ve halı (4×3) ekleyin; sağ tıkla silin.
 - **Kir türleri:** toz, sıvı ve leke; her biri bataryayı farklı tüketir. Halı üzerinde güç tüketimi artar.
